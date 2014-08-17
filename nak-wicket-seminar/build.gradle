@@ -1,0 +1,172 @@
+apply plugin: 'idea'
+apply plugin: 'eclipse'
+apply plugin: 'java'
+
+apply from: 'dependencies.gradle'
+
+apply plugin: 'versions'
+buildscript {
+    repositories {
+        maven { url "https://github.com/ben-manes/gradle-versions-plugin/raw/mvnrepo" }
+        maven { url 'http://oss.sonatype.org/content/repositories/snapshots/' }
+        maven { url 'http://repo.joist.ws' }
+        maven { url 'http://bindgen-wicket.googlecode.com/svn/maven2' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.github.ben-manes:gradle-versions-plugin:0.5-beta-5'
+    }
+}
+
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
+
+gradle.taskGraph.beforeTask { Task task -> ext.lastTaskStart = new Date().getTime()
+}
+
+gradle.taskGraph.afterTask { Task task, TaskState state -> println "runtime of " + task.name + " has been " + ((new Date().getTime() - ext.lastTaskStart) / 1000) + "s"
+}
+
+configurations {
+    apt.extendsFrom compile
+    all*.exclude group: 'org.apache.wicket', module: 'wicket'
+}
+
+dependencies {
+    compile libs.wicketAnnotations, libs.wicketBindgen, libs.wicketExtensions, libs.bindgen, libs.wicketSpring, libs.springWebMVC, libs.mongoJavaDriver, libs.validationApi, libs.hibernateValidator
+    compile libs.slf4jLog4j12, libs.javaxServlet
+    testCompile libs.mockito, libs.hamcrestCore, libs.hamcrestLib, libs.junit, libs.enhancedWicketTester
+    testRuntime libs.cobertura, libs.guice, libs.velocity
+    testRuntime module(libs.reportng) {
+        dependency libs.testng
+    }
+}
+
+repositories {
+    maven { url 'http://oss.sonatype.org/content/repositories/snapshots/' }
+    maven { url 'http://repo.joist.ws' }
+    maven { url 'http://bindgen-wicket.googlecode.com/svn/maven2' }
+    mavenCentral()
+}
+
+sourceSets {
+    apt {
+        output.classesDir 'build/generated/main/java'
+        java {
+            srcDir 'src/main/java'
+        }
+    }
+    //noinspection GroovyAssignabilityCheck
+    main {
+        java {
+            srcDir 'build/generated/main/java'
+            srcDir 'src/main/java'
+        }
+        resources {
+            srcDir('src/main/resources')
+            srcDir('src/main/java')
+        }
+    }
+}
+
+compileAptJava {
+    classpath += configurations.apt
+}
+compileJava {
+    dependsOn compileAptJava
+    options.compilerArgs = ["-proc:none"]
+}
+
+//noinspection GroovyAssignabilityCheck
+def cobSerFile = "${project.buildDir}/cobertura.ser"
+def srcOriginal = sourceSets.main.output.classesDir
+//noinspection GroovyAssignabilityCheck
+def srcCopy = "${srcOriginal}-copy"
+task testGroupTemplate(type: Test) {
+    useTestNG()
+    systemProperty "net.sourceforge.cobertura.datafile", cobSerFile
+    options {
+        listeners << 'org.testng.reporters.XMLReporter'
+        listeners << 'org.uncommons.reportng.HTMLReporter'
+        listeners << 'org.uncommons.reportng.JUnitXMLReporter'
+    }
+}
+tasks.addRule("Check the group suffix for all testGroup<xyz> calls and run tests for the specific group <xyz>") { String taskName ->
+    final String prefix = "testGroup"
+    if (taskName.startsWith(prefix) && (taskName.length() > prefix.length())) {
+        def testTaskToRun = task(taskName)
+        def testGroup = (taskName - prefix).toLowerCase()
+        logger.info("running tests from test group " + testGroup)
+        def aTestTask = tasks.getByName("testGroupTemplate")
+        //noinspection GroovyAssignabilityCheck
+        aTestTask.getReports().
+                getJunitXml().
+                setDestination(new File(project.getReports().
+                        getJunitXml().
+                        getDestination(), "group-" + testGroup))
+        //noinspection GroovyAssignabilityCheck
+        aTestTask.getReports().
+                getHtml().
+                setDestination(new File(project.getReports().
+                        getHtml().
+                        getDestination(), "group-" + testGroup))
+        aTestTask.options {
+            includeGroups = [testGroup]
+            excludeGroups = []
+        }
+        testTaskToRun.dependsOn(aTestTask)
+    }
+}
+task test0prepare(dependsOn: tasks.testClasses) {
+    doFirst {
+        ant {
+            delete(file: cobSerFile, failonerror: false)
+            delete(dir: srcCopy, failonerror: false)
+            taskdef(resource: 'tasks.properties', classpath: configurations.testRuntime.asPath)
+            copy(todir: srcCopy) {
+                fileset(dir: srcOriginal)
+            }
+            'cobertura-instrument'(datafile: cobSerFile) {
+                fileset(dir: srcOriginal,
+                        includes: "**/cheesr/**/*.class",
+                        excludes: "**/*Test.class")
+            }
+        }
+    }
+}
+task test1unit(type: Test) {
+    description = "Tell gradle to use TestNG with all groups"
+    useTestNG()
+    systemProperty "net.sourceforge.cobertura.datafile", cobSerFile
+    options {
+        parallel = "methods"
+        threadCount = 4
+        listeners << 'org.testng.reporters.XMLReporter'
+    }
+}
+task test2integration(type: Test) {
+    description = "Tell gradle to use TestNG with all groups"
+    useTestNG()
+    systemProperty "net.sourceforge.cobertura.datafile", cobSerFile
+    options {
+        includeGroups = ['integration']
+        excludeGroups = ['cdc']
+        listeners << 'org.testng.reporters.XMLReporter'
+        listeners << 'org.uncommons.reportng.HTMLReporter'
+        listeners << 'org.uncommons.reportng.JUnitXMLReporter'
+    }
+}
+task test3report() {
+    doLast {
+        //noinspection GroovyAssignabilityCheck
+        if (new File(srcCopy).exists()) {
+            ant {
+                delete(file: srcOriginal)
+                move(file: srcCopy, tofile: srcOriginal)
+            }
+            ant.'cobertura-report'(destdir: "${reporting.baseDir}/cobertura",
+                    format: 'xml', srcdir: "src/main/java", datafile: cobSerFile)
+        }
+    }
+}
+check.dependsOn 'testAll'
+task testAll(dependsOn: [tasks.test0prepare, tasks.test1unit, tasks.test2integration, tasks.test3report]) << {}

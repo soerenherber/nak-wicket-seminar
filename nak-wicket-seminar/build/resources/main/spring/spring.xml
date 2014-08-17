@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns="http://www.springframework.org/schema/beans"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context-3.0.xsd">
+    <bean id="mongoClient" class="com.mongodb.MongoClient">
+        <constructor-arg value="127.0.0.1" type="java.lang.String"/>
+        <constructor-arg value="27017" type="int"/>
+    </bean>
+    <bean id="mongodb" class="de.nordakademie.persistence.common.MongodbFactory">
+        <property name="mongoClient" ref="mongoClient"/>
+        <property name="databaseName" value="cheesr"/>
+    </bean>
+    <bean id="nakWicketSeminarApplication" class="de.nordakademie.ui.NakWicketSeminarApplication"/>
+    <context:annotation-config/>
+    <context:component-scan base-package="de.nordakademie"/>
+</beans>
